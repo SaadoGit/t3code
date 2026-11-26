@@ -25,7 +25,11 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
-import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  useConnectedEnvironmentIds,
+  useDisconnectedEnvironmentIds,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -572,5 +576,139 @@ describe("sidebar settled pagination", () => {
     const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
     await act(() => moreButton.click());
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+  });
+});
+
+describe("sidebar disconnected shelf", () => {
+  it("groups non-settled threads from disconnected machines under Snoozed and restores them when reconnected", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => {
+      __setClientSettingsForTests(previousSettings);
+      window.localStorage.removeItem("t3code:sidebar:settled-expanded");
+      window.localStorage.removeItem("t3code:sidebar:disconnected-expanded");
+    });
+    window.localStorage.removeItem("t3code:sidebar:settled-expanded");
+    window.localStorage.removeItem("t3code:sidebar:disconnected-expanded");
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: false });
+
+    const localEnv = EnvironmentId.make("local");
+    const remoteEnv = EnvironmentId.make("remote");
+    const localProject = project("local-proj");
+    const remoteProject: Project = {
+      ...project("remote-proj"),
+      id: ProjectId.make("remote-proj"),
+      environmentId: remoteEnv,
+      title: "api-server",
+    };
+    const localThread = makeThreadFixture({
+      environmentId: localEnv,
+      projectId: localProject.id,
+      id: ThreadId.make("local-1"),
+      title: "Local active thread",
+    });
+    const remotePinned = makeThreadFixture({
+      environmentId: remoteEnv,
+      projectId: remoteProject.id,
+      id: ThreadId.make("remote-pinned"),
+      title: "Remote pinned thread",
+      pinnedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const remoteSettled = makeThreadFixture({
+      environmentId: remoteEnv,
+      projectId: remoteProject.id,
+      id: ThreadId.make("remote-settled"),
+      title: "Remote settled thread",
+      settledOverride: "settled",
+      settledAt: "2026-01-01T00:00:00.000Z",
+    });
+    const localSnoozed = makeThreadFixture({
+      environmentId: localEnv,
+      projectId: localProject.id,
+      id: ThreadId.make("local-snoozed"),
+      title: "Local snoozed thread",
+      snoozedAt: "2026-01-01T00:00:00.000Z",
+      snoozedUntil: "2099-01-01T00:00:00.000Z",
+    });
+
+    vi.mocked(useProjects).mockReturnValue([localProject, remoteProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      localThread,
+      remotePinned,
+      remoteSettled,
+      localSnoozed,
+    ]);
+    vi.mocked(useConnectedEnvironmentIds).mockReturnValue([localEnv]);
+    vi.mocked(useDisconnectedEnvironmentIds).mockReturnValue([remoteEnv]);
+    vi.mocked(usePrimaryEnvironmentId).mockReturnValue(localEnv);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({
+      kind: "server",
+      threadRef: { environmentId: localEnv, threadId: localThread.id },
+    });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: { environmentId: localEnv, projectId: localProject.id },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: { environmentId: localEnv, threadId: localThread.id },
+    });
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          localEnv,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+        [
+          remoteEnv,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    // Disconnected shelf sits between Snoozed and Settled, collapsed by default.
+    const headers = [...screen.container.querySelectorAll('[data-sidebar-row^="shelf:"]')].map(
+      (element) => element.getAttribute("data-sidebar-row"),
+    );
+    expect(headers).toEqual(["shelf:snoozed", "shelf:disconnected", "shelf:settled"]);
+
+    const disconnectedHeader = screen.container.querySelector<HTMLElement>(
+      '[data-sidebar-row="shelf:disconnected"]',
+    )!;
+    expect(disconnectedHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(disconnectedHeader.textContent).toContain("Disconnected");
+    expect(disconnectedHeader.textContent).toContain("1");
+    await expect.element(screen.getByText("Remote pinned thread")).not.toBeInTheDocument();
+
+    // Expanding reveals the disconnected machine's active/pinned thread (not settled ones).
+    await userEvent.click(disconnectedHeader);
+    await expect.element(screen.getByText("Remote pinned thread")).toBeVisible();
+    await expect.element(screen.getByText("Remote settled thread")).not.toBeInTheDocument();
+
+    // Reconnecting restores the pinned thread and hides the empty Disconnected shelf.
+    vi.mocked(useConnectedEnvironmentIds).mockReturnValue([localEnv, remoteEnv]);
+    vi.mocked(useDisconnectedEnvironmentIds).mockReturnValue([]);
+    await screen.rerender(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect
+      .element(screen.getByRole("button", { name: /^Disconnected\b/ }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByText("Remote pinned thread")).toBeVisible();
   });
 });

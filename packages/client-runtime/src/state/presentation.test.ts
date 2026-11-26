@@ -176,4 +176,41 @@ describe("connection presentation", () => {
       h.registry.dispose();
     }
   });
+
+  it("tracks disconnected environments while ignoring initial connecting handshakes", () => {
+    const h = harness();
+    const stop = h.registry.subscribe(h.disconnectedEnvironmentIdsAtom, () => {});
+    try {
+      // Enabled environments start out connecting before supervisor state arrives.
+      expect(h.registry.get(h.disconnectedEnvironmentIdsAtom)).toEqual([]);
+
+      h.registry.set(
+        h.state,
+        AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "connected" }),
+      );
+      expect(h.registry.get(h.disconnectedEnvironmentIdsAtom)).toEqual([]);
+
+      h.registry.set(
+        h.state,
+        AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "offline" }),
+      );
+      expect(h.registry.get(h.disconnectedEnvironmentIdsAtom)).toEqual([FIRST, SECOND]);
+
+      h.registry.set(
+        h.state,
+        AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "connected" }),
+      );
+      h.registry.set(h.catalog, {
+        isReady: true,
+        entries: new Map([
+          [FIRST, entry(FIRST)],
+          [SECOND, { ...entry(SECOND), enabled: false }],
+        ]),
+      });
+      expect(h.registry.get(h.disconnectedEnvironmentIdsAtom)).toEqual([SECOND]);
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
 });

@@ -311,6 +311,23 @@ export function createEnvironmentSummaryAtoms(input: {
       ? previous
       : next;
   });
+  const disconnectedEnvironmentIdsAtom = Atom.make((get) => {
+    const next = get(environmentIdsAtom).filter((id) => {
+      const environment = get(environmentAtom(id));
+      if (environment === null) return false;
+      return (
+        !environment.isEnabled ||
+        (environment.connectionState !== "connected" &&
+          environment.connectionState !== "connecting")
+      );
+    });
+    const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentId>>());
+    return previous !== null &&
+      previous.length === next.length &&
+      next.every((id, index) => id === previous[index])
+      ? previous
+      : next;
+  });
   const machineByIdAtom = Atom.make((get) => {
     const next = new Map(
       get(environmentIdsAtom).map(
@@ -344,6 +361,7 @@ export function createEnvironmentSummaryAtoms(input: {
   return {
     environmentIdsAtom,
     connectedEnvironmentIdsAtom,
+    disconnectedEnvironmentIdsAtom,
     identitiesAtom,
     environmentsAtom,
     machineByIdAtom,

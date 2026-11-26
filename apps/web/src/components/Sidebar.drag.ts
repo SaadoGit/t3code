@@ -17,6 +17,7 @@ const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" &&
   (item.marker === "working-header" ||
     item.marker === "snoozed-header" ||
+    item.marker === "disconnected-header" ||
     item.marker === "settled-header");
 
 export function restrictBelowSidebarLabel(
@@ -56,7 +57,9 @@ export function createSidebarCollisionDetection(
       if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
         if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
-        const nextHeader = (["working-header", "snoozed-header", "settled-header"] as const)
+        const nextHeader = (
+          ["working-header", "snoozed-header", "disconnected-header", "settled-header"] as const
+        )
           .map((marker) =>
             args.droppableContainers.find((container) => container.id === sidebarMarkerId(marker)),
           )
@@ -119,6 +122,7 @@ export function createSidebarSortingStrategy(input: {
       active: [],
       working: [],
       snoozed: [],
+      disconnected: [],
       settled: [],
     };
     let cardHeight = input.cardHeight;
@@ -132,7 +136,12 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active" || item.section === "working")
+      if (
+        item.section === "pinned" ||
+        item.section === "active" ||
+        item.section === "working" ||
+        item.section === "disconnected"
+      )
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
@@ -188,6 +197,10 @@ export function createSidebarSortingStrategy(input: {
       marker("snoozed-header");
       projected.push(...groups.snoozed);
     }
+    if (items.some((item) => item.kind === "marker" && item.marker === "disconnected-header")) {
+      marker("disconnected-header");
+      projected.push(...groups.disconnected);
+    }
     marker("settled-header");
     section("settled");
     const heights = projected.map((item) => {
@@ -195,7 +208,10 @@ export function createSidebarSortingStrategy(input: {
       const rect = index === undefined ? undefined : rects[index];
       const fallback =
         item.kind === "thread" &&
-        (item.section === "pinned" || item.section === "active" || item.section === "working")
+        (item.section === "pinned" ||
+          item.section === "active" ||
+          item.section === "working" ||
+          item.section === "disconnected")
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;

@@ -26,6 +26,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  resolveSidebarThreadSection,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1854,5 +1855,56 @@ describe("filterSidebarProjectScopeItems", () => {
 
     expect(filter("")).toEqual([ADD_PROJECT_SCOPE_ITEM_VALUE, "all", "p1"]);
     expect(filter("project")).toEqual(["p1"]);
+  });
+});
+
+describe("disconnected sidebar section", () => {
+  it("routes non-settled, non-snoozed disconnected threads to disconnected while preserving snoozed and settled", () => {
+    expect(
+      resolveSidebarThreadSection({
+        snoozed: false,
+        settled: false,
+        disconnected: true,
+        pinned: true,
+      }),
+    ).toBe("disconnected");
+    expect(
+      resolveSidebarThreadSection({
+        snoozed: false,
+        settled: false,
+        disconnected: true,
+        pinned: false,
+      }),
+    ).toBe("disconnected");
+    expect(
+      resolveSidebarThreadSection({
+        snoozed: true,
+        settled: false,
+        disconnected: true,
+        pinned: false,
+      }),
+    ).toBe("snoozed");
+    expect(
+      resolveSidebarThreadSection({
+        snoozed: false,
+        settled: true,
+        disconnected: true,
+        pinned: false,
+      }),
+    ).toBe("settled");
+  });
+
+  it("rejects drops into the disconnected shelf", () => {
+    const items: SidebarListItem[] = [
+      { kind: "marker", marker: "pinned-header" },
+      { kind: "marker", marker: "pinned-divider" },
+      { kind: "thread", key: "active-1", section: "active" },
+      { kind: "marker", marker: "snoozed-header" },
+      { kind: "marker", marker: "disconnected-header" },
+      { kind: "thread", key: "disc-1", section: "disconnected" },
+      { kind: "marker", marker: "settled-header" },
+    ];
+    expect(resolveSidebarDropTarget(items, "active-1", "disc-1")).toBeNull();
+    expect(resolveSidebarDropVerb("active", "disconnected")).toBeNull();
   });
 });
