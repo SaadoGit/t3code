@@ -1,4 +1,4 @@
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { errorDisplayMessage, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -103,6 +103,7 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
+import { environmentCatalog } from "../connection/catalog";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -273,6 +274,11 @@ import {
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import {
+  isEnvironmentToggleBlocked,
+  isToggleableRemoteEnvironment,
+  remoteEnvironmentStatus,
+} from "./sidebar/SidebarEnvironmentsControl";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
@@ -507,6 +513,9 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
@@ -1839,6 +1848,61 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  for (const environment of environments) {
+    if (!isToggleableRemoteEnvironment(environment) || isEnvironmentToggleBlocked(environment)) {
+      continue;
+    }
+    const enabled = environment.entry.enabled && environment.connection.phase !== "unsupported";
+    const status = remoteEnvironmentStatus(environment, messages);
+    const machineKind = resolveEnvironmentMachineKind(environment.serverConfig);
+    actionItems.push({
+      kind: "action",
+      value: `action:environment:toggle:${environment.environmentId}`,
+      searchTerms: [
+        "environment",
+        "environments",
+        "machine",
+        "remote",
+        "connect",
+        "disconnect",
+        "enable",
+        "disable",
+        "switch",
+        "toggle",
+        environment.label,
+      ],
+      title: enabled
+        ? gt("Switch off {label}", { label: environment.label })
+        : gt("Switch on {label}", { label: environment.label }),
+      description: gt("Environments · {status}", { status: status.text }),
+      icon: <EnvironmentMachineIcon className={ITEM_ICON_CLASS} kind={machineKind} />,
+      run: async () => {
+        const nextEnabled = !enabled;
+        const result = await setEnvironmentEnabled({
+          environmentId: environment.environmentId,
+          enabled: nextEnabled,
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: nextEnabled
+                ? gt("Could not switch backend on")
+                : gt("Could not switch backend off"),
+              description:
+                error instanceof Error
+                  ? (errorDisplayMessage(error, messages) ?? error.message)
+                  : nextEnabled
+                    ? gt("Failed to switch the backend on.")
+                    : gt("Failed to switch the backend off."),
+            }),
+          );
+        }
+      },
+    });
+  }
 
   // Every group, so an archived project's thread still opens its own settings.
   const currentProjectGroup =
